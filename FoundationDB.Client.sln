@@ -1,7 +1,7 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 2013
-VisualStudioVersion = 12.0.31101.0
+# Visual Studio 14
+VisualStudioVersion = 14.0.25123.0
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FoundationDB.Client", "FoundationDB.Client\FoundationDB.Client.csproj", "{773166B7-DE74-4FCC-845C-84080CC89533}"
 EndProject
@@ -61,6 +61,8 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = ".nuget", ".nuget", "{49DAFC
 		.nuget\NuGet.targets = .nuget\NuGet.targets
 	EndProjectSection
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "FoundationDB.EventStore", "Fdb.EventStore\FoundationDB.EventStore.csproj", "{E67072B1-FB78-457D-B0D8-CBF80924D411}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -115,6 +117,10 @@ Global
 		{60049BA1-A95F-4127-BAC5-74AF023D3082}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{60049BA1-A95F-4127-BAC5-74AF023D3082}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{60049BA1-A95F-4127-BAC5-74AF023D3082}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E67072B1-FB78-457D-B0D8-CBF80924D411}.Debug|Any CPU.ActiveCfg = Debug|x64
+		{E67072B1-FB78-457D-B0D8-CBF80924D411}.Debug|Any CPU.Build.0 = Debug|x64
+		{E67072B1-FB78-457D-B0D8-CBF80924D411}.Release|Any CPU.ActiveCfg = Release|x64
+		{E67072B1-FB78-457D-B0D8-CBF80924D411}.Release|Any CPU.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -132,5 +138,6 @@ Global
 		{60C39E7E-E6CD-404B-8F9B-9BABF302AABC} = {1F010B54-2028-4B4D-A6FF-9892A00E83FC}
 		{A1731E5B-59B5-49E0-A9B2-E552B18FA1C6} = {1F010B54-2028-4B4D-A6FF-9892A00E83FC}
 		{60049BA1-A95F-4127-BAC5-74AF023D3082} = {1F010B54-2028-4B4D-A6FF-9892A00E83FC}
+		{E67072B1-FB78-457D-B0D8-CBF80924D411} = {B40329A5-32B5-4056-8C8F-424E845D2688}
 	EndGlobalSection
 EndGlobal

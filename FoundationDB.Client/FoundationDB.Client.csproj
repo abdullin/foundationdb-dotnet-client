@@ -29,15 +29,18 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
-    <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
+    <OutputPath>..\build\output\</OutputPath>
+    <DefineConstants>TRACE;__MonoCS__</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
     <Prefer32Bit>false</Prefer32Bit>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DocumentationFile>bin\Release\FoundationDB.Client.XML</DocumentationFile>
-    <WarningsAsErrors>105,108,109,114,472,660,661,628,1066</WarningsAsErrors>
-    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DocumentationFile>
+    </DocumentationFile>
+    <WarningsAsErrors>
+    </WarningsAsErrors>
+    <PlatformTarget>x64</PlatformTarget>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <PropertyGroup>
     <SignAssembly>true</SignAssembly>
@@ -65,6 +68,7 @@
     <Compile Include="Converters\SimilarValueComparer.cs" />
     <Compile Include="Core\IFdbClusterHandler.cs" />
     <Compile Include="Core\IFdbDatabaseHandler.cs" />
+    <Compile Include="Layers\AppendOnlyStore\FdbAppendOnlyStore.cs" />
     <Compile Include="Subspaces\FdbEncoderSubspaceKeys`4.cs" />
     <Compile Include="Subspaces\FdbEncoderSubspaceKeys`3.cs" />
     <Compile Include="Subspaces\FdbEncoderSubspaceKeys`2.cs" />

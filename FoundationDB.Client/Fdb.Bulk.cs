@@ -1322,11 +1322,24 @@ namespace FoundationDB.Client
 			/// <param name="range">Pair of keys defining the start range</param>
 			/// <param name="handler">Lambda that will be called for each batch of data read from the database. The first argument is the array of ordered key/value pairs in the batch, taken from the same database snapshot. The second argument is the offset of the first item in the array, from the start of the range. The third argument is a token should be used by any async i/o performed by the lambda.</param>
 			/// <param name="cancellationToken">Token used to cancel the operation</param>
+			/// <param name="rangeOptions">Optional options to be applied. Defaults to <see cref="FdbStreamingMode.Serial"/></param>
+			/// <param name="reset">Optional handler to apply to each transaction. Defaults to <see cref="FdbTransactionOption.PriorityBatch"/></param>
 			/// <returns>Number of keys exported</returns>
 			/// <remarks>This method cannot guarantee that all data will be read from the same snapshot of the database, which means that writes committed while the export is running may be seen partially. Only the items inside a single batch are guaranteed to be from the same snapshot of the database.</remarks>
-			public static Task<long> ExportAsync([NotNull] IFdbDatabase db, FdbKeyRange range, [NotNull, InstantHandle] Func<KeyValuePair<Slice, Slice>[], long, CancellationToken, Task> handler, CancellationToken cancellationToken)
+			public static Task<long> ExportAsync([NotNull] IFdbDatabase db, FdbKeyRange range, [NotNull, InstantHandle] Func<KeyValuePair<Slice, Slice>[], long, CancellationToken, Task> handler, 
+				CancellationToken cancellationToken,
+				FdbRangeOptions rangeOptions = null,
+				Action<IFdbReadOnlyTransaction> reset = null
+				)
 			{
-				return ExportAsync(db, FdbKeySelector.FirstGreaterOrEqual(range.Begin), FdbKeySelector.FirstGreaterOrEqual(range.End), handler, cancellationToken);
+				return ExportAsync(
+					db, 
+					FdbKeySelector.FirstGreaterOrEqual(range.Begin), 
+					FdbKeySelector.FirstGreaterOrEqual(range.End), 
+					handler, 
+					cancellationToken,
+					rangeOptions,
+					reset);
 			}
 
 			/// <summary>Export the content of a potentially large range of keys defined by a pair of selectors.</summary>
@@ -1335,9 +1348,18 @@ namespace FoundationDB.Client
 			/// <param name="end">Selector defining the end of the range (excluded)</param>
 			/// <param name="handler">Lambda that will be called for each batch of data read from the database. The first argument is the array of ordered key/value pairs in the batch, taken from the same database snapshot. The second argument is the offset of the first item in the array, from the start of the range. The third argument is a token should be used by any async i/o performed by the lambda.</param>
 			/// <param name="cancellationToken">Token used to cancel the operation</param>
+			/// <param name="rangeOptions">Optional options to be applied. Defaults to <see cref="FdbStreamingMode.Serial"/></param>
+			/// <param name="reset">Optional handler to apply to each transaction. Defaults to <see cref="FdbTransactionOption.PriorityBatch"/></param>
 			/// <returns>Number of keys exported</returns>
 			/// <remarks>This method cannot guarantee that all data will be read from the same snapshot of the database, which means that writes committed while the export is running may be seen partially. Only the items inside a single batch are guaranteed to be from the same snapshot of the database.</remarks>
-			public static async Task<long> ExportAsync([NotNull] IFdbDatabase db, FdbKeySelector begin, FdbKeySelector end, [NotNull, InstantHandle] Func<KeyValuePair<Slice, Slice>[], long, CancellationToken, Task> handler, CancellationToken cancellationToken)
+			public static async Task<long> ExportAsync(
+				[NotNull] IFdbDatabase db, 
+				FdbKeySelector begin, 
+				FdbKeySelector end, 
+				[NotNull, InstantHandle] Func<KeyValuePair<Slice, Slice>[], long, CancellationToken, Task> handler, 
+				CancellationToken cancellationToken,
+				FdbRangeOptions rangeOptions = null,
+				Action<IFdbReadOnlyTransaction> reset = null)
 			{
 				if (db == null) throw new ArgumentNullException("db");
 				if (handler == null) throw new ArgumentNullException("handler");
@@ -1363,18 +1385,20 @@ namespace FoundationDB.Client
 				//	W:           [*B1]-----[*B2]-----[*B3]-----[ *B4 + flush to disk ...... |*B5]-----[*B6]------....
 
 				// this lambda should be applied on any new or reset transaction
-				Action<IFdbReadOnlyTransaction> reset = (tr) =>
-				{
-					// should export be lower priority? TODO: make if configurable!
-					tr.WithPriorityBatch();
-				};
+				if (reset == null) {
+					reset = (tr) =>
+					{
+						tr.WithPriorityBatch();
+					};
+				}
+				
 
 				using (var tr = db.BeginReadOnlyTransaction(cancellationToken))
 				{
 					reset(tr);
 
-					//TODO: make options configurable!
-					var options = new FdbRangeOptions
+					
+					var options = rangeOptions??new FdbRangeOptions
 					{
 						// serial mode is optimized for a single client with maximum throughput
 						Mode = FdbStreamingMode.Serial,

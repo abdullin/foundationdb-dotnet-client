@@ -84,6 +84,7 @@
     <Compile Include="Experimental\ProtobufCodec.cs" />
     <Compile Include="Filters\LoggingFilterFacts.cs" />
     <Compile Include="Experimental\JsonNetCodec.cs" />
+    <Compile Include="Layers\AppendOnlyStoreFacts.cs" />
     <Compile Include="Layers\MultiMapFacts.cs" />
     <Compile Include="Layers\RankedSetFacts.cs" />
     <Compile Include="Layers\VectorFacts.cs" />

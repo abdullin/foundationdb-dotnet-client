@@ -35,7 +35,7 @@ namespace FoundationDB.Async
 	using System.Threading.Tasks;
 
 	/// <summary>Helper methods to work on tasks</summary>
-	internal static class TaskHelpers
+	public static class TaskHelpers
 	{
 
 		/// <summary>Helper type cache class</summary>
