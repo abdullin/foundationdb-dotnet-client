@@ -44,6 +44,7 @@ namespace FoundationDB.EventStore
 
 			var go = new CancellationTokenSource();
 
+			Console.WriteLine("Server Version {0}, Client will use {1}", Fdb.GetMaxApiVersion(), Fdb.GetMaxSafeApiVersion());
 			// Initialize FDB
 			//note: always use the latest version available
 			Fdb.UseApiVersion(Fdb.GetMaxSafeApiVersion());
@@ -57,16 +58,10 @@ namespace FoundationDB.EventStore
 			var es = new FdbAppendOnlyStore(db, space);
 
 			Console.WriteLine("Clearing subspace");
-			es.ResetStore();
+			await es.ResetStore(go.Token);
 			Console.WriteLine("Starting the test");
-
-
-			
-
 			
 			var queues = new List< ConcurrentQueue<Tuple<string, byte[]>>>();
-
-
 			var tasks = new List<Task>();
 
 			for (int i = 0; i < args.Workers; i++) {
@@ -79,20 +74,10 @@ namespace FoundationDB.EventStore
 				} , args.InputFile, queue);
 				tasks.Add(reader);
 			}
-
-			
 			
 			await Task.Delay(1000, go.Token);
-
-
-
 			// spam commits on a single thread
-
-
-
-
 			var t1 = Stopwatch.StartNew();
-
 			var t2 = Stopwatch.StartNew();
 
 
@@ -129,14 +114,14 @@ namespace FoundationDB.EventStore
 					diskUsed = status.Cluster.Data.TotalDiskUsedBytes;
 				}
 
-
+				var elapsedSeconds = t1.ElapsedMilliseconds/1000;
 				
 				
 				
-				Console.WriteLine("{0:########}\t{1:########}\t{2:########}\t{3:#####}\t{4:#####}", 
+				Console.WriteLine("{0:########}\t{1:#########}\t{2:######}\t{3:######}\t{4:######}", 
 					tg.ElapsedMilliseconds, 
 					c1, 
-					passed,
+					passed/elapsedSeconds,
 					commits,
 					conflicts);
 				
@@ -147,6 +132,8 @@ namespace FoundationDB.EventStore
 
 			// single thread test
 		}
+
+
 
 		static async Task RunApender(
 			CancellationToken token, 
@@ -162,8 +149,8 @@ namespace FoundationDB.EventStore
 						var s = tuple.Item1;
 						var data = tuple.Item2;
 						int ver = 0;
-						await es.ReadStreamData(token, s, 0, int.MaxValue, (stream, l) => { ver += 1; });
-						await es.AppendAsync(token, s, data, ver);
+						await es.ReadStream(token, s, (stream, l) => { ver += 1; }, 0, int.MaxValue);
+						await es.Append(token, s, data, ver);
 						Interlocked.Increment(ref c1);
 						Interlocked.Increment(ref c2);
 					}

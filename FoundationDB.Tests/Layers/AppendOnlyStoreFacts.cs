@@ -23,22 +23,25 @@ namespace FoundationDB.EventStore {
 
 
 		[Test]
-		public void when_append_and_read()
+		public async Task when_append_and_read()
 		{
 
-			using (var db = OpenTestPartitionAsync().Result)
+			using (var db = await OpenTestPartitionAsync())
 			{
 				var appendOnly = new FdbAppendOnlyStore(db, GetCleanDirectory(db, "es", "simple").Result);
 
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message1"));
-				appendOnly.Append("stream2", Encoding.UTF8.GetBytes("test message2"));
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message3"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message1"));
+				await appendOnly.Append(Cancellation, "stream2", Encoding.UTF8.GetBytes("test message2"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message3"));
 
-				var recordsSteam1 = appendOnly.ReadRecords("stream1", 0, Int32.MaxValue).ToArray();
-				var recordsSteam2 = appendOnly.ReadRecords("stream2", 0, Int32.MaxValue).ToArray();
+				
 
-				Assert.AreEqual(2, recordsSteam1.Length);
-				Assert.AreEqual(1, recordsSteam2.Length);
+
+				var recordsSteam1 = await appendOnly.ReadStream(Cancellation,  "stream1");
+				var recordsSteam2 = await appendOnly.ReadStream(Cancellation, "stream2");
+
+				Assert.AreEqual(2, recordsSteam1.Count);
+				Assert.AreEqual(1, recordsSteam2.Count);
 				Assert.AreEqual("test message1", Encoding.UTF8.GetString(recordsSteam1[0].Data));
 				Assert.AreEqual("test message3", Encoding.UTF8.GetString(recordsSteam1[1].Data));
 				Assert.AreEqual("test message2", Encoding.UTF8.GetString(recordsSteam2[0].Data));
@@ -49,9 +52,9 @@ namespace FoundationDB.EventStore {
 		}
 
 		[Test]
-		public void when_read_after_version()
+		public async Task when_read_after_version()
 		{
-			using (var db = OpenTestPartitionAsync().Result)
+			using (var db = await OpenTestPartitionAsync())
 			{
 				var location = GetCleanDirectory(db,
 					"es",
@@ -60,19 +63,19 @@ namespace FoundationDB.EventStore {
 
 				var appendOnly = new FdbAppendOnlyStore(db, location);
 
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message1"));
-				appendOnly.Append("stream2", Encoding.UTF8.GetBytes("test message2"));
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message3"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message1"));
+				await appendOnly.Append(Cancellation, "stream2", Encoding.UTF8.GetBytes("test message2"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message3"));
 
-				var recordsSteam1 = appendOnly.ReadRecords("stream1", 1, Int32.MaxValue).ToArray();
+				var recordsSteam1 = await appendOnly.ReadStream(Cancellation, "stream1", 1);
 
-				Assert.AreEqual(1, recordsSteam1.Length);
+				Assert.AreEqual(1, recordsSteam1.Count);
 				Assert.AreEqual("test message3", Encoding.UTF8.GetString(recordsSteam1[0].Data));
 			}
 		}
 
 		[Test]
-		public void when_read_than_set_max_records()
+		public async Task when_read_than_set_max_records()
 		{
 			using (var db = OpenTestPartitionAsync().Result)
 			{
@@ -83,20 +86,20 @@ namespace FoundationDB.EventStore {
 
 				var appendOnly = new FdbAppendOnlyStore(db, location);
 
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message1"));
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message2"));
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message3"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message1"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message2"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message3"));
 
-				var recordsSteam1 = appendOnly.ReadRecords("stream1", 0, 2).ToArray();
+				var recordsSteam1 = await appendOnly.ReadStream(Cancellation, "stream1", 0, 2);
 
-				Assert.AreEqual(2, recordsSteam1.Length);
+				Assert.AreEqual(2, recordsSteam1.Count);
 				Assert.AreEqual("test message1", Encoding.UTF8.GetString(recordsSteam1[0].Data));
 				Assert.AreEqual("test message2", Encoding.UTF8.GetString(recordsSteam1[1].Data));
 			}
 		}
 
 		[Test]
-		public void when_reads_record()
+		public async Task when_reads_store()
 		{
 			using (var db = OpenTestPartitionAsync().Result)
 			{
@@ -107,13 +110,13 @@ namespace FoundationDB.EventStore {
 
 				var appendOnly = new FdbAppendOnlyStore(db, location);
 
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message1"));
-				appendOnly.Append("stream2", Encoding.UTF8.GetBytes("test message2"));
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message3"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message1"));
+				await appendOnly.Append(Cancellation, "stream2", Encoding.UTF8.GetBytes("test message2"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message3"));
 
-				var recordsSteam = appendOnly.ReadRecords(0, Int32.MaxValue).ToArray();
+				var recordsSteam = await  appendOnly.ReadStore(Cancellation,  0, Int32.MaxValue);
 
-				Assert.AreEqual(3, recordsSteam.Length);
+				Assert.AreEqual(3, recordsSteam.Count);
 				Assert.AreEqual(1, recordsSteam[0].StoreVersion);
 				Assert.AreEqual(2, recordsSteam[1].StoreVersion);
 				Assert.AreEqual(3, recordsSteam[2].StoreVersion);
@@ -126,32 +129,32 @@ namespace FoundationDB.EventStore {
 
 		[Test]
 		[ExpectedException(typeof(AppendOnlyStoreConcurrencyException))]
-		public void append_data_when_set_version_where_does_not_correspond_real_version()
+		public async Task append_data_when_set_version_where_does_not_correspond_real_version()
 		{
 			using (var db = OpenTestPartitionAsync().Result)
 			{
 				var appendOnly = new FdbAppendOnlyStore(db, GetCleanDirectory(db, "es", "simple").Result);
 
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message1"), 100);
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message1"), 100);
 			}
 		}
 
 		[Test]
-		public void get_current_version()
+		public async Task get_current_version()
 		{
 			using (var db = OpenTestPartitionAsync().Result)
 			{
 				var appendOnly = new FdbAppendOnlyStore(db, GetCleanDirectory(db, "es", "simple").Result);
 
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message1"));
-				appendOnly.Append("stream2", Encoding.UTF8.GetBytes("test message2"));
-				appendOnly.Append("stream1", Encoding.UTF8.GetBytes("test message3"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message1"));
+				await appendOnly.Append(Cancellation, "stream2", Encoding.UTF8.GetBytes("test message2"));
+				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message3"));
 
-				Assert.AreEqual(3, appendOnly.GetCurrentVersion());
+				Assert.AreEqual(3, await appendOnly.GetCurrentVersion(Cancellation));
 			}
 		}
 
-		private void CreateCacheFiles(IFdbDatabase db, IFdbSubspace space)
+		private async Task CreateCacheFiles(IFdbDatabase db, IFdbSubspace space)
 		{
 
 			var appendOnly = new FdbAppendOnlyStore(db, space);
@@ -162,29 +165,29 @@ namespace FoundationDB.EventStore {
 			{
 				for (var i = 0; i < FileMessagesCount; i++)
 				{
-					appendOnly.Append("test-key" + index, Encoding.UTF8.GetBytes(msg + i));
+					await appendOnly.Append(Cancellation, "test-key" + index, Encoding.UTF8.GetBytes(msg + i));
 				}
 			}
 
 		}
 
 		[Test]
-		public void load_cache()
+		public async Task load_cache()
 		{
 
 
 			using (var db = OpenTestPartitionAsync().Result)
 			{
 				var subspace = GetCleanDirectory(db, "es", "simple").Result;
-				this.CreateCacheFiles(db, subspace);
+				await this.CreateCacheFiles(db, subspace);
 
 				var appendOnly = new FdbAppendOnlyStore(db, subspace);
 
 				for (var j = 0; j < DataFileCount; j++)
 				{
 					var key = "test-key" + j;
-					var data = appendOnly.ReadRecords(key, 0, Int32.MaxValue).ToArray();
-					Assert.AreEqual(FileMessagesCount, data.Length);
+					var data = await appendOnly.ReadStream(Cancellation,  key);
+					Assert.AreEqual(FileMessagesCount, data.Count);
 					var i = 0;
 					foreach (var dataWithKey in data)
 					{
@@ -196,7 +199,7 @@ namespace FoundationDB.EventStore {
 		}
 
 		[Test]
-		public void when_reset_store()
+		public async Task when_reset_store()
 		{
 			using (var db = OpenTestPartitionAsync().Result)
 			{
@@ -206,12 +209,12 @@ namespace FoundationDB.EventStore {
 
 				for (var i = 0; i < 10; i++)
 				{
-					appendOnly.Append(stream, Encoding.UTF8.GetBytes("test message" + i));
+					await appendOnly.Append(this.Cancellation, stream, Encoding.UTF8.GetBytes("test message" + i));
 				}
 
-				var version = appendOnly.GetCurrentVersion();
-				appendOnly.ResetStore();
-				var versionAfterReset = appendOnly.GetCurrentVersion();
+				var version = await appendOnly.GetCurrentVersion(this.Cancellation);
+				await appendOnly.ResetStore(Cancellation);
+				var versionAfterReset = await appendOnly.GetCurrentVersion(Cancellation);
 
 				Assert.GreaterOrEqual(10, version);
 				Assert.AreEqual(0, versionAfterReset);
@@ -219,9 +222,9 @@ namespace FoundationDB.EventStore {
 		}
 
 		[Test]
-		public void when_append_after_reset_store()
+		public async Task when_append_after_reset_store()
 		{
-			using (var db = OpenTestPartitionAsync().Result)
+			using (var db = await OpenTestPartitionAsync())
 			{
 				var appendOnly = new FdbAppendOnlyStore(db, GetCleanDirectory(db, "es", "simple").Result);
 
@@ -229,24 +232,24 @@ namespace FoundationDB.EventStore {
 
 				for (var i = 0; i < 10; i++)
 				{
-					appendOnly.Append(stream, Encoding.UTF8.GetBytes("test message" + i));
+					await appendOnly.Append(Cancellation, stream, Encoding.UTF8.GetBytes("test message" + i));
 				}
-				appendOnly.ResetStore();
+				await appendOnly.ResetStore(Cancellation);
 				for (var i = 0; i < 10; i++)
 				{
-					appendOnly.Append(stream, Encoding.UTF8.GetBytes("test message" + i));
+					await appendOnly.Append(Cancellation, stream, Encoding.UTF8.GetBytes("test message" + i));
 				}
 
-				var version = appendOnly.GetCurrentVersion();
+				var version = await appendOnly.GetCurrentVersion(Cancellation);
 
 				Assert.GreaterOrEqual(10, version);
 			}
 		}
 
 		[Test]
-		public void When_having_version_overflow()
+		public async Task When_having_version_overflow()
 		{
-			using (var db = OpenTestPartitionAsync().Result)
+			using (var db = await OpenTestPartitionAsync())
 			{
 				var appendOnly = new FdbAppendOnlyStore(db, GetCleanDirectory(db, "es", "simple").Result);
 
@@ -256,12 +259,12 @@ namespace FoundationDB.EventStore {
 					var version = Convert.ToInt64(Math.Pow(10L, i));
 					versions.Add(version);
 
-					appendOnly.Append("all", BitConverter.GetBytes(version));
+					await appendOnly.Append(Cancellation, "all", BitConverter.GetBytes(version));
 
 				}
 				// recreate
 
-				var stores = appendOnly.ReadRecords(0, int.MaxValue)
+				var stores =( await appendOnly.ReadStore(Cancellation, 0, int.MaxValue))
 					.Select(d => BitConverter.ToInt64(d.Data, 0));
 				CollectionAssert.AreEqual(versions, stores);
 			}
@@ -279,9 +282,9 @@ namespace FoundationDB.EventStore {
 				var store = new FdbAppendOnlyStore(db, location);
 
 				var data = Guid.NewGuid().ToByteArray();
-				var result = store.Append("test", data);
+				var result =await store.Append(Cancellation, "test", data);
 				Assert.That(result, Is.EqualTo(1));
-				Assert.That(store.GetVersionSnapshot(), Is.EqualTo(1));
+				Assert.That(await store.GetCurrentVersion(Cancellation), Is.EqualTo(1));
 			}
 		}
 
@@ -297,10 +300,10 @@ namespace FoundationDB.EventStore {
 					"simple");
 
 				var store = new FdbAppendOnlyStore(db, location);
-				 store.Append("test", new byte[10]);
+				await  store.Append(Cancellation, "test", new byte[10]);
 				//await DumpSubspace(db, location);
 				var store2 = new FdbAppendOnlyStore(db, location);
-				Assert.That(store2.GetVersionSnapshot(), Is.EqualTo(1));
+				Assert.That(await store2.GetCurrentVersion(Cancellation), Is.EqualTo(1));
 			}
 		}
 
@@ -321,15 +324,17 @@ namespace FoundationDB.EventStore {
 
 				var bytes = slice.GetBytes();
 
-				store.Append("test", bytes);
-
+				await store.Append(Cancellation, "test", bytes);
+				var stored = new List<Tuple<long,byte[]>>();
 				
-				 var stored = store.ReadRecords("test",0,10000).ToList();
+				 await store
+					.ReadStream(Cancellation,  "test",(stream, l) => stored.Add(Tuple.Create(l, stream.ToArray())), 0, 10000)
+					.ConfigureAwait(false);
 
 
 				Assert.That(stored.Count, Is.EqualTo(1));
-				Assert.That(() => stored[0].Data, Is.EquivalentTo(bytes));
-				Assert.That(() => stored[0].StreamVersion, Is.EqualTo(1));
+				Assert.That(() => stored[0].Item2, Is.EquivalentTo(bytes));
+				Assert.That(() => stored[0].Item1, Is.EqualTo(1));
 				
 			}
 		}
