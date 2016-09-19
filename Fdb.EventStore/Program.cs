@@ -98,8 +98,8 @@ namespace FoundationDB.EventStore
 				tasks.Add(RunApender(go.Token, queues[i], es));
 			}
 
-			Console.WriteLine("Launching inbox processor");
-			tasks.Add(es.ProcessInboxForever(go.Token, args.InboxChunkSize));
+			//Console.WriteLine("Launching inbox processor");
+			//tasks.Add(es.ProcessInboxForever(go.Token, args.InboxChunkSize));
 
 			Console.WriteLine("Launching {0} projectors", args.Projectors);
 			for (int i = 0; i < args.Projectors; i++) {
@@ -113,10 +113,10 @@ namespace FoundationDB.EventStore
 			while (!go.IsCancellationRequested)
 			{
 				var eventCountBefore = Interlocked.Read(ref AppendedEventCount);
-				await Task.Delay(10000, go.Token);
+				await Task.Delay(10000, go.Token).ConfigureAwait(false);
 				
 				var events = Interlocked.Read(ref AppendedEventCount) - eventCountBefore;
-				var storeVersion = await es.GetStoreVersion(go.Token);
+				var storeVersion = await es.GetStoreVersion(go.Token).ConfigureAwait(false);
 
 
 				//FdbSystemStatus status;

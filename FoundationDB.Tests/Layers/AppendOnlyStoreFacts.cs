@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -114,7 +115,7 @@ namespace FoundationDB.EventStore {
 				await appendOnly.Append(Cancellation, "stream2", Encoding.UTF8.GetBytes("test message2"));
 				await appendOnly.Append(Cancellation, "stream1", Encoding.UTF8.GetBytes("test message3"));
 
-				await appendOnly.ProcessInbox(Cancellation);
+				//await appendOnly.ProcessInbox(Cancellation);
 
 				var recordsSteam = await  appendOnly.ReadStore(Cancellation,  0, Int32.MaxValue);
 
@@ -155,7 +156,6 @@ namespace FoundationDB.EventStore {
 				Assert.AreEqual(0, await appendOnly.GetStoreVersion(Cancellation));
 
 				await appendOnly.ProcessInbox(Cancellation);
-
 				Assert.AreEqual(3, await appendOnly.GetStoreVersion(Cancellation));
 			}
 		}
@@ -218,7 +218,7 @@ namespace FoundationDB.EventStore {
 					await appendOnly.Append(this.Cancellation, stream, Encoding.UTF8.GetBytes("test message" + i));
 				}
 
-				await appendOnly.ProcessInbox(Cancellation);
+				//await appendOnly.ProcessInbox(Cancellation);
 				var version = await appendOnly.GetStoreVersion(this.Cancellation);
 				Assert.GreaterOrEqual(10, version);
 
@@ -246,7 +246,7 @@ namespace FoundationDB.EventStore {
 				{
 					await appendOnly.Append(Cancellation, stream, Encoding.UTF8.GetBytes("test message" + i));
 				}
-				await appendOnly.ProcessInbox(Cancellation);
+				//await appendOnly.ProcessInbox(Cancellation);
 				var version = await appendOnly.GetStoreVersion(Cancellation);
 
 				Assert.GreaterOrEqual(10, version);
@@ -269,7 +269,7 @@ namespace FoundationDB.EventStore {
 					await appendOnly.Append(Cancellation, "all", BitConverter.GetBytes(version));
 
 				}
-				await appendOnly.ProcessInbox(Cancellation);
+				//await appendOnly.ProcessInbox(Cancellation);
 				// recreate
 
 				var stores =( await appendOnly.ReadStore(Cancellation, 0, int.MaxValue))
@@ -290,8 +290,9 @@ namespace FoundationDB.EventStore {
 				var store = new FdbAppendOnlyStore(db, location);
 
 				var data = Guid.NewGuid().ToByteArray();
-				var result =await store.Append(Cancellation, "test", data);
+				var result = await store.Append(Cancellation, "test", data);
 				Assert.That(result, Is.EqualTo(1));
+				
 
 				await store.ProcessInbox(Cancellation);
 				Assert.That(await store.GetStoreVersion(Cancellation), Is.EqualTo(1));

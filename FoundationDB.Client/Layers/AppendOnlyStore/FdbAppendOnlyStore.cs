@@ -118,22 +118,28 @@ namespace FoundationDB.EventStore {
 
 		
 
-		public async Task ProcessInboxForever(CancellationToken token, int inboxChunkSize) {
-			while (!token.IsCancellationRequested) {
-				try {
-					var hadWork = await ProcessInbox(token,inboxChunkSize).ConfigureAwait(false);
-					if (!hadWork) {
-						await Task.Delay(TimeSpan.FromMilliseconds(250), token).ConfigureAwait(false);
-					}
-				}
-				catch (Exception) {
-					// we have an exception which is not retriable. Sleep
-					await Task.Delay(TimeSpan.FromSeconds(5000), token);
-				}
-			}
-		}
+		//public async Task ProcessInboxForever(CancellationToken token, int inboxChunkSize) {
+		//	while (!token.IsCancellationRequested) {
+		//		try {
+		//			var hadWork = await ProcessInbox(token,inboxChunkSize).ConfigureAwait(false);
+		//			if (!hadWork) {
+		//				await Task.Delay(TimeSpan.FromMilliseconds(250), token).ConfigureAwait(false);
+		//			}
+		//		}
+		//		catch (Exception) {
+		//			// we have an exception which is not retriable. Sleep
+		//			await Task.Delay(TimeSpan.FromSeconds(5000), token);
+		//		}
+		//	}
+		//}
 
-		public async Task<bool> ProcessInbox(CancellationToken token, int inboxChunkSize = 100) {
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="token"></param>
+		/// <param name="inboxChunkSize"></param>
+		/// <returns>true if we managed to get something out of the inbox</returns>
+		public async Task<ProcessInboxResult> ProcessInbox(CancellationToken token, int inboxChunkSize = 100) {
 			using (var tr = _db.BeginTransaction(token)) {
 				while (!token.IsCancellationRequested) {
 					try {
@@ -156,7 +162,7 @@ namespace FoundationDB.EventStore {
 							if (keyFromTheEnd.HasValue) {
 								rangeEnd = keyFromTheEnd;
 							} else {
-								return false;
+								return ProcessInboxResult.Nothing;
 							}
 						}
 
@@ -195,15 +201,18 @@ namespace FoundationDB.EventStore {
 						tr.ClearRange(transferRange);
 						tr.Set(_storeVersionKey, Slice.FromInt64(currentStoreVersion));
 						await tr.CommitAsync().ConfigureAwait(false);
-						return true;
+						return ProcessInboxResult.Processed;
 					}
 					catch (FdbException ex) {
+						if (ex.Code == FdbError.NotCommitted) {
+							return ProcessInboxResult.Conflict;
+						}
 						await tr.OnErrorAsync(ex.Code).ConfigureAwait(false);
 					}
 				}
 			}
 			// returns on cancellation
-			return false;
+			return ProcessInboxResult.Nothing;
 		}
 
 		public async Task<long> Append(CancellationToken token, string streamName, byte[] data,
@@ -354,54 +363,36 @@ namespace FoundationDB.EventStore {
 		public async Task ReadStore(CancellationToken token, long startingFrom, int maxCount,
 			Action<MemoryStream, long> handler) {
 			var aggSpace = _storeSpace;
-			await ReadDataInSpace(
+			var count = await ReadDataInSpace(
 				token,
 				handler,
 				startingFrom,
 				maxCount,
 				aggSpace).ConfigureAwait(false);
-		}
 
-		const int SerializeBatchSize = 10000;
+			// if we didn't get anything to handle, projector will probably sleep anyway
+			if (count == 0) {
+				// let's try to process the inbox
+				var result = await ProcessInbox(token).ConfigureAwait(false);
 
-		/// <summary>
-		/// 
-		/// </summary>
-		/// <param name="token"></param>
-		/// <returns>true if there is more work</returns>
-		public async Task<bool> SerializeInbox(CancellationToken token) {
-
-			using (var tr = _db.BeginTransaction(token)) {
-				while (true) {
-					token.ThrowIfCancellationRequested();
-					try {
-						// get next range. We don't want to conflict with inbox
-						// insertions so the snapshot is good enough
-						var inboxVersionFuture = GetInboxVersion(tr.Snapshot);
-						var storeVersionFuture = GetStoreVersion(tr);
-						var inboxVersion = await inboxVersionFuture;
-						var storeVersion = await storeVersionFuture;
-
-						if (inboxVersion == storeVersion) {
-							// nothing to do at the moment
-							return false;
-						}
-
-						if (storeVersion > inboxVersion) {
-							throw new InvalidOperationException("Somehow we have more items in store than went through the inbox");
-						}
-						var toCatchUp = Math.Min(SerializeBatchSize, (inboxVersion - storeVersion));
-
-						
-
-					}
-					catch (FdbException ex)
-					{
-						await tr.OnErrorAsync(ex.Code).ConfigureAwait(false);
-					}
+				switch (result) {
+					case ProcessInboxResult.Conflict:
+					case ProcessInboxResult.Processed:
+						await ReadDataInSpace(
+						token,
+						handler,
+						startingFrom,
+						maxCount,
+						aggSpace).ConfigureAwait(false);
+						break;
+					case ProcessInboxResult.Nothing:
+						break;
+					default:
+						throw new ArgumentOutOfRangeException();
 				}
 			}
 		}
+
 
 		public async Task<IList<StoreData>> ReadStore(CancellationToken token, long skip, int limit) {
 			var list = new List<StoreData>();
@@ -420,7 +411,7 @@ namespace FoundationDB.EventStore {
 		}
 
 
-		async Task ReadDataInSpace(CancellationToken token, Action<MemoryStream, long> handler, long skip,
+		async Task<int> ReadDataInSpace(CancellationToken token, Action<MemoryStream, long> handler, long skip,
 			int limit,
 			IFdbSubspace readSpace) {
 			// events come with versions 1,2,3 (starting with 1).
@@ -444,6 +435,8 @@ namespace FoundationDB.EventStore {
 				Mode = FdbStreamingMode.WantAll
 			};
 
+			int handled = 0;
+
 			using (var stream = new MemoryStream()) {
 				await Fdb.Bulk.ExportAsync(_db, range, (pairs, offset, ct) => {
 					foreach (var pair in pairs) {
@@ -461,6 +454,7 @@ namespace FoundationDB.EventStore {
 						if (chunkId + 1 == chunkCount) {
 							var version = tuple.Get<long>(0);
 							handler(stream, version);
+							handled += 1;
 							stream.Seek(0, SeekOrigin.Begin);
 							stream.SetLength(0);
 						}
@@ -468,11 +462,18 @@ namespace FoundationDB.EventStore {
 					return TaskHelpers.CompletedTask;
 				}, token, options, transaction => { }).ConfigureAwait(false);
 			}
+			return handled;
 		}
 
 		public void Dispose() {
 			// nothing to dispose
 		}
+	}
+
+	public enum ProcessInboxResult {
+		Processed,
+		Nothing,
+		Conflict
 	}
 
 
