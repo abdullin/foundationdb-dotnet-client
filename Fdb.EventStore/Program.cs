@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using CommandLine;
 using CommandLine.Text;
 using FoundationDB.Client;
+using FoundationDB.Client.Status;
 using FoundationDB.Layers.Tuples;
 
 namespace FoundationDB.EventStore
@@ -20,7 +21,9 @@ namespace FoundationDB.EventStore
 	class Program {
 
 
-		static long c1 = 0;
+		static long AppendedEventCount = 0;
+
+		static long ProjectedCount = 0;
 		static long c2 = 0;
 		static void Main(string[] args) {
 
@@ -75,7 +78,8 @@ namespace FoundationDB.EventStore
 				tasks.Add(reader);
 			}
 			
-			await Task.Delay(1000, go.Token);
+			Console.WriteLine("Sleeping a little, to let the store clean and queues fill");
+			await Task.Delay(5000, go.Token);
 			// spam commits on a single thread
 			var t1 = Stopwatch.StartNew();
 			var t2 = Stopwatch.StartNew();
@@ -94,36 +98,58 @@ namespace FoundationDB.EventStore
 				tasks.Add(RunApender(go.Token, queues[i], es));
 			}
 
+			Console.WriteLine("Launching inbox processor");
+			tasks.Add(es.ProcessInboxForever(go.Token, args.InboxChunkSize));
+
+			Console.WriteLine("Launching {0} projectors", args.Projectors);
+			for (int i = 0; i < args.Projectors; i++) {
+				tasks.Add(RunProjector(go.Token, es));
+			}
+
+			Table.PrintRow("Inserted","Speed", "dVer", "dProj");
+
+		
+	
 			while (!go.IsCancellationRequested)
 			{
-
-				var counter = Interlocked.Read(ref c1);
+				var eventCountBefore = Interlocked.Read(ref AppendedEventCount);
 				await Task.Delay(10000, go.Token);
 				
-				var passed = Interlocked.Read(ref c1) - counter;
+				var events = Interlocked.Read(ref AppendedEventCount) - eventCountBefore;
+				var storeVersion = await es.GetStoreVersion(go.Token);
 
-				var status = await Fdb.System.GetStatusAsync(db, go.Token);
+
+				//FdbSystemStatus status;
+				//using (var tr = db.BeginReadOnlyTransaction(go.Token)) {
+				//	tr.WithPrioritySystemImmediate();
+				//	tr.WithReadAccessToSystemKeys();
+				//	status = await Fdb.System.GetStatusAsync(tr);
+				//}
+
+				
 
 
-				double conflicts = double.NaN;
-				double commits = double.NaN;
-				long diskUsed = -1;
-				if (status != null) {
-					conflicts = status.Cluster.Workload.Transactions.Conflicted.Hz;
-					commits = status.Cluster.Workload.Transactions.Committed.Hz;
-					diskUsed = status.Cluster.Data.TotalDiskUsedBytes;
-				}
+				//double conflicts = double.NaN;
+				//double commits = double.NaN;
+				//long diskUsed = -1;
+				//if (status != null) {
+				//	conflicts = status.Cluster.Workload.Transactions.Conflicted.Hz;
+				//	commits = status.Cluster.Workload.Transactions.Committed.Hz;
+				//	diskUsed = status.Cluster.Data.TotalDiskUsedBytes;
+				//}
 
 				var elapsedSeconds = t1.ElapsedMilliseconds/1000;
+
+
+				var deltaProj = (AppendedEventCount*args.Projectors - ProjectedCount) / args.Projectors;
 				
+				Table.PrintRow(
+					AppendedEventCount,
+					events / elapsedSeconds,
+					AppendedEventCount - storeVersion,
+					deltaProj
+					);
 				
-				
-				Console.WriteLine("{0:########}\t{1:#########}\t{2:######}\t{3:######}\t{4:######}", 
-					tg.ElapsedMilliseconds, 
-					c1, 
-					passed/elapsedSeconds,
-					commits,
-					conflicts);
 				
 				t1.Restart();
 			}
@@ -133,7 +159,24 @@ namespace FoundationDB.EventStore
 			// single thread test
 		}
 
+		static async Task RunProjector(CancellationToken token, FdbAppendOnlyStore es) {
+			long version = 0;
 
+			
+			while (!token.IsCancellationRequested) {
+				var handled = 0;
+				await es.ReadStore(token, version, 100, (stream, l) => {
+					version = l;
+					handled += 1;
+				}).ConfigureAwait(false);
+
+				if (handled > 0) {
+					Interlocked.Add(ref ProjectedCount, handled);
+				} else {
+					await Task.Delay(250, token).ConfigureAwait(false);
+				}
+			}
+		}
 
 		static async Task RunApender(
 			CancellationToken token, 
@@ -149,9 +192,11 @@ namespace FoundationDB.EventStore
 						var s = tuple.Item1;
 						var data = tuple.Item2;
 						int ver = 0;
-						await es.ReadStream(token, s, (stream, l) => { ver += 1; }, 0, int.MaxValue);
-						await es.Append(token, s, data, ver);
-						Interlocked.Increment(ref c1);
+						await es.ReadStream(token, s, (stream, l) => { ver += 1; }, 0, int.MaxValue)
+							.ConfigureAwait(false);
+						await es.Append(token, s, data, ver)
+							.ConfigureAwait(false);
+						Interlocked.Increment(ref AppendedEventCount);
 						Interlocked.Increment(ref c2);
 					}
 					catch (Exception ex) {
@@ -182,7 +227,8 @@ namespace FoundationDB.EventStore
 
 
 							while (q.Count >= 10000) {
-								await Task.Delay(500, token);
+								await Task.Delay(500, token)
+									.ConfigureAwait(false);
 							}
 
 							q.Enqueue(Tuple.Create(s, data));
@@ -204,6 +250,12 @@ namespace FoundationDB.EventStore
 		  HelpText = "Number of workers to run.")]
 		public int Workers { get; set; }
 
+		[Option('p', "projectors", DefaultValue = 1, HelpText = "Number of projectors to run")]
+		public int Projectors { get; set; }
+
+		[Option('c', "chunks", DefaultValue = 5000, HelpText = "Inbox Chunk Size")]
+		public int InboxChunkSize { get; set; }
+
 		[ParserState]
 		public IParserState LastParserState { get; set; }
 
@@ -212,6 +264,43 @@ namespace FoundationDB.EventStore
 		{
 			return HelpText.AutoBuild(this,
 			  (HelpText current) => HelpText.DefaultParsingErrorsHandler(this, current));
+		}
+	}
+
+
+	public static class Table {
+		static int tableWidth = 77;
+
+		public static void PrintLine()
+		{
+			Console.WriteLine(new string('-', tableWidth));
+		}
+
+		public static void PrintRow(params object[] columns)
+		{
+			int width = (tableWidth - columns.Length) / columns.Length;
+			string row = "|";
+
+			foreach (var column in columns)
+			{
+				row += AlignCentre(column, width) + "|";
+			}
+
+			Console.WriteLine(row);
+		}
+
+		static string AlignCentre(object s, int width) {
+			var text = s.ToString();
+			text = text.Length > width ? text.Substring(0, width - 3) + "..." : text;
+
+			if (string.IsNullOrEmpty(text))
+			{
+				return new string(' ', width);
+			}
+			else
+			{
+				return text.PadLeft(width);
+			}
 		}
 	}
 

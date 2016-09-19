@@ -1832,7 +1832,7 @@ namespace FoundationDB.Layers.Tuples.Tests
 			var ip = IPAddress.Parse("192.168.0.1");
 			Assert.That(FdbTuple.DecodeKey<IPAddress>(FdbTuple.EncodeKey(ip.ToString())), Is.EqualTo(ip));
 			Assert.That(FdbTuple.DecodeKey<IPAddress>(FdbTuple.EncodeKey(ip.GetAddressBytes())), Is.EqualTo(ip));
-			Assert.That(FdbTuple.DecodeKey<IPAddress>(FdbTuple.EncodeKey(ip.Address)), Is.EqualTo(ip));
+			//Assert.That(FdbTuple.DecodeKey<IPAddress>(FdbTuple.EncodeKey(ip.Address)), Is.EqualTo(ip));
 		}
 
 		[Test]

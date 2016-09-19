@@ -26,6 +26,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #endregion
 
+#pragma warning disable 618
 namespace FoundationDB.Client.Tests
 {
 	using FoundationDB.Client;

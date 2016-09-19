@@ -24,18 +24,23 @@ namespace FoundationDB.EventStore {
 		readonly IFdbDatabase _db;
 		readonly IFdbSubspace _subspace;
 		readonly IFdbSubspace _aggSpace;
-		readonly IFdbSubspace _globalSpace;
-
-		readonly Slice _ageKey;
+		readonly IFdbSubspace _inboxSpace;
+		readonly IFdbSubspace _storeSpace;
+		readonly Slice _inboxVersionKey;
 
 
 		public FdbAppendOnlyStore(IFdbDatabase db, IFdbSubspace subspace) {
 			_db = db;
 			_subspace = subspace;
 
-			_aggSpace = subspace[FdbTuple.Create((byte) 1)];
-			_globalSpace = subspace[FdbTuple.Create((byte) 2)];
-			_ageKey = subspace[FdbTuple.Create((byte) 0)].ToFoundationDbKey();
+			_aggSpace = subspace[Slice.FromAscii("agg")];
+
+			_inboxSpace = subspace[Slice.FromAscii("inbox")];
+			_inboxVersionKey = subspace[Slice.FromAscii("i-v")].ToFoundationDbKey();
+
+			_storeSpace = subspace[Slice.FromAscii("store")];
+			_storeVersionKey = subspace[Slice.FromAscii("s-v")].ToFoundationDbKey();
+
 		}
 
 		async Task<long> GetLastEventVersion(IFdbReadOnlyTransaction tr, IFdbSubspace prefix) {
@@ -53,8 +58,8 @@ namespace FoundationDB.EventStore {
 			return tuple.Get<long>(0);
 		}
 
-		async Task<long> GetStoreAge(IFdbReadOnlyTransaction tr) {
-			var result = await tr.GetAsync(_ageKey)
+		async Task<long> GetInboxVersion(IFdbReadOnlyTransaction tr) {
+			var result = await tr.GetAsync(_inboxVersionKey)
 				.ConfigureAwait(false);
 
 			if (result.IsNullOrEmpty) {
@@ -62,8 +67,21 @@ namespace FoundationDB.EventStore {
 			}
 			return result.ToInt64();
 		}
+		async Task<long> GetStoreVersion(IFdbReadOnlyTransaction tr)
+		{
+			var result = await tr.GetAsync(_storeVersionKey)
+				.ConfigureAwait(false);
+
+			if (result.IsNullOrEmpty)
+			{
+				return 0;
+			}
+			return result.ToInt64();
+		}
 
 		public const int MaxBlobSize = (1000*100);
+
+
 
 		static void WriteBlob(IFdbTransaction tr, IFdbSubspace key, byte[] data) {
 			if (data.Length == 0) {
@@ -94,6 +112,99 @@ namespace FoundationDB.EventStore {
 		//}
 
 		private static readonly Slice PlusOne = Slice.FromFixed64(1);
+		readonly Slice _storeVersionKey;
+
+		
+
+		
+
+		public async Task ProcessInboxForever(CancellationToken token, int inboxChunkSize) {
+			while (!token.IsCancellationRequested) {
+				try {
+					var hadWork = await ProcessInbox(token,inboxChunkSize).ConfigureAwait(false);
+					if (!hadWork) {
+						await Task.Delay(TimeSpan.FromMilliseconds(250), token).ConfigureAwait(false);
+					}
+				}
+				catch (Exception) {
+					// we have an exception which is not retriable. Sleep
+					await Task.Delay(TimeSpan.FromSeconds(5000), token);
+				}
+			}
+		}
+
+		public async Task<bool> ProcessInbox(CancellationToken token, int inboxChunkSize = 100) {
+			using (var tr = _db.BeginTransaction(token)) {
+				while (!token.IsCancellationRequested) {
+					try {
+						var range = _inboxSpace.ToRange();
+
+						var selectNthInboxKey = FdbKeySelector.FirstGreaterThan(range.Begin) + inboxChunkSize;
+
+
+						var slice0 = tr.GetKeyAsync(selectNthInboxKey);
+						var keyWithOffset = _inboxSpace.ExtractKey(await slice0);
+
+						Slice rangeEnd;
+						if (keyWithOffset.HasValue) {
+							rangeEnd = keyWithOffset;
+						} else {
+							// let's scan from the end
+							var slice1 = await tr.GetKeyAsync(FdbKeySelector.LastLessThan(range.End));
+							var keyFromTheEnd = _inboxSpace.ExtractKey(slice1);
+
+							if (keyFromTheEnd.HasValue) {
+								rangeEnd = keyFromTheEnd;
+							} else {
+								return false;
+							}
+						}
+
+						var storeVersion = await GetStoreVersion(tr).ConfigureAwait(false);
+						var currentStoreVersion = storeVersion;
+						// we start processing inbox from the beginning of the inbox and
+						// up to the last detected event (completely)
+						var lastTuple = rangeEnd.ToTuple();
+						// our selection of ProcessInboxInChunksOf might end up in the middle of a large event
+						// so we extend key range to include that entire event.
+						var rangeEnds = lastTuple.Truncate(2).Append(ushort.MaxValue, ushort.MaxValue);
+
+
+
+						var transferRange = new FdbKeyRange(range.Begin, _inboxSpace[rangeEnds].ToFoundationDbKey());
+
+						var inboxRangeValues = await tr.GetRangeAsync(transferRange, new FdbRangeOptions() {
+							Mode = FdbStreamingMode.WantAll
+						}).ConfigureAwait(false);
+
+						foreach (var pair in inboxRangeValues.Chunk) {
+							// get aggregate chunk key.
+							var tuple = _inboxSpace.ExtractKey(pair.Key).ToTuple();
+							// take last 2 (chunk info).
+							var chunkInfo = tuple.Truncate(-2);
+
+							if (chunkInfo.Get<ushort>(0) == 0) {
+								// we are at the boundary.
+								currentStoreVersion += 1;
+							}
+							// compose store version
+
+							var newKey = _storeSpace[FdbTuple.Create(currentStoreVersion).Concat(chunkInfo)];
+							tr.Set(newKey, pair.Value);
+						}
+						tr.ClearRange(transferRange);
+						tr.Set(_storeVersionKey, Slice.FromInt64(currentStoreVersion));
+						await tr.CommitAsync().ConfigureAwait(false);
+						return true;
+					}
+					catch (FdbException ex) {
+						await tr.OnErrorAsync(ex.Code).ConfigureAwait(false);
+					}
+				}
+			}
+			// returns on cancellation
+			return false;
+		}
 
 		public async Task<long> Append(CancellationToken token, string streamName, byte[] data,
 			long expectedStreamVersion = -1) {
@@ -121,26 +232,28 @@ namespace FoundationDB.EventStore {
 				while (true) {
 					token.ThrowIfCancellationRequested();
 					try {
-						// launch computation
-						var storeAgeFuture = GetStoreAge(tr.Snapshot);
+						// launch computation, but don't await, yet
+						// we are reading from the snapshot to avoid conflicts
+						// we'll append random key while writing
+						var inboxAgeFuture = GetInboxVersion(tr.Snapshot);
 
 						//var globalVersion = tr.Snapshot.GetKeyAsync()
 
-						var version = await GetLastEventVersion(tr, aggSpace).ConfigureAwait(false);
+						var streamVersion = await GetLastEventVersion(tr, aggSpace).ConfigureAwait(false);
 
 						if (expectedStreamVersion != -1) {
-							if (version != expectedStreamVersion) {
-								throw new AppendOnlyStoreConcurrencyException(expectedStreamVersion, version, streamName);
+							if (streamVersion != expectedStreamVersion) {
+								throw new AppendOnlyStoreConcurrencyException(expectedStreamVersion, streamVersion, streamName);
 							}
 						}
 
 
-						var storeAge = await storeAgeFuture.ConfigureAwait(false);
+						var inboxVersion = await inboxAgeFuture.ConfigureAwait(false);
 
-						var nextStoreAge = storeAge + 1;
+						var nextStoreAge = inboxVersion + 1;
 						var sid = Sid.CreateNew(nextStoreAge);
 
-						var newStreamVersion = version + 1;
+						var newStreamVersion = streamVersion + 1;
 						// ReSharper disable RedundantTypeArgumentsOfMethod
 
 
@@ -148,15 +261,18 @@ namespace FoundationDB.EventStore {
 
 
 						// due to snapshot version of the global store version, we might have multiple
-						// workers writing at the same point of time.
-						var storeKey = _globalSpace[FdbTuple.Create<long, byte[]>(nextStoreAge, sid.GetBytes())];
+						// workers writing at the same point of time. So we add a random ID to the global version
+						// This makes pushes fast and usually conflict free
+						var inboxKey = _inboxSpace[FdbTuple.Create<long, byte[]>(nextStoreAge, sid.GetBytes())];
 						// ReSharper restore RedundantTypeArgumentsOfMethod
 
-						// just dump copy.
+						// Dump full event to the aggregate stream
 						WriteBlob(tr, versionedEventKey, data);
-						WriteBlob(tr, storeKey, data);
+						//// put pointer to aggregate event into inbox
+						//tr.Set(inboxKey, versionedEventKey.ToFoundationDbKey());
+						WriteBlob(tr, inboxKey, data);
 
-						tr.AtomicAdd(_ageKey, PlusOne);
+						tr.AtomicAdd(_inboxVersionKey, PlusOne);
 
 						await tr.CommitAsync().ConfigureAwait(false);
 						return newStreamVersion;
@@ -191,7 +307,7 @@ namespace FoundationDB.EventStore {
 				handler,
 				startingFrom,
 				maxCount,
-				aggSpace);
+				aggSpace).ConfigureAwait(false);
 		}
 
 		public async Task<IList<StreamData>> ReadStream(CancellationToken token, string streamName,
@@ -205,6 +321,7 @@ namespace FoundationDB.EventStore {
 					streamName,
 					// potentially allocating LOH
 					(stream, l) => list.Add(new StreamData(stream.ToArray(), l)), startingFrom, maxCount)
+					.ConfigureAwait(false)
 				// blocking wait
 				;
 
@@ -220,20 +337,70 @@ namespace FoundationDB.EventStore {
 			);
 		}
 
-		public Task<long> GetCurrentVersion(CancellationToken token) {
-			return _db.ReadAsync(GetStoreAge, token);
+		public async Task<long> GetStoreVersion(CancellationToken token) {
+
+			using (var tr = _db.BeginReadOnlyTransaction(token)) {
+				var version = await GetStoreVersion(tr.Snapshot).ConfigureAwait(false);
+				return version;
+			}
+		}
+
+		public Task<long> GetInboxVersion(CancellationToken token)
+		{
+			return _db.ReadAsync(GetInboxVersion, token);
 		}
 
 
 		public async Task ReadStore(CancellationToken token, long startingFrom, int maxCount,
 			Action<MemoryStream, long> handler) {
-			var aggSpace = _globalSpace;
+			var aggSpace = _storeSpace;
 			await ReadDataInSpace(
 				token,
 				handler,
 				startingFrom,
 				maxCount,
-				aggSpace);
+				aggSpace).ConfigureAwait(false);
+		}
+
+		const int SerializeBatchSize = 10000;
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="token"></param>
+		/// <returns>true if there is more work</returns>
+		public async Task<bool> SerializeInbox(CancellationToken token) {
+
+			using (var tr = _db.BeginTransaction(token)) {
+				while (true) {
+					token.ThrowIfCancellationRequested();
+					try {
+						// get next range. We don't want to conflict with inbox
+						// insertions so the snapshot is good enough
+						var inboxVersionFuture = GetInboxVersion(tr.Snapshot);
+						var storeVersionFuture = GetStoreVersion(tr);
+						var inboxVersion = await inboxVersionFuture;
+						var storeVersion = await storeVersionFuture;
+
+						if (inboxVersion == storeVersion) {
+							// nothing to do at the moment
+							return false;
+						}
+
+						if (storeVersion > inboxVersion) {
+							throw new InvalidOperationException("Somehow we have more items in store than went through the inbox");
+						}
+						var toCatchUp = Math.Min(SerializeBatchSize, (inboxVersion - storeVersion));
+
+						
+
+					}
+					catch (FdbException ex)
+					{
+						await tr.OnErrorAsync(ex.Code).ConfigureAwait(false);
+					}
+				}
+			}
 		}
 
 		public async Task<IList<StoreData>> ReadStore(CancellationToken token, long skip, int limit) {
@@ -246,7 +413,8 @@ namespace FoundationDB.EventStore {
 				skip,
 				limit,
 				// we are potentially allocating LOH
-				(stream, ver) => list.Add(new StoreData(stream.ToArray(), ver)));
+				(stream, ver) => list.Add(new StoreData(stream.ToArray(), ver)))
+				.ConfigureAwait(false);
 
 			return list;
 		}
