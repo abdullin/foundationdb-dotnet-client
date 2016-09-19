@@ -13,6 +13,7 @@ using System.Threading.Tasks;
 using CommandLine;
 using CommandLine.Text;
 using FoundationDB.Client;
+using FoundationDB.Client.Layers.AppendOnlyStore;
 using FoundationDB.Client.Status;
 using FoundationDB.Layers.Tuples;
 
@@ -51,6 +52,7 @@ namespace FoundationDB.EventStore
 			// Initialize FDB
 			//note: always use the latest version available
 			Fdb.UseApiVersion(Fdb.GetMaxSafeApiVersion());
+			
 			Console.WriteLine("Starting network thread...");
 			Fdb.Start();
 

@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using FoundationDB.Client;
+using FoundationDB.Client.Layers.AppendOnlyStore;
 using FoundationDB.Client.Tests;
 using FoundationDB.Layers.Counters;
 using NUnit.Framework;
