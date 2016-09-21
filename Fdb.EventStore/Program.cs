@@ -57,7 +57,7 @@ namespace FoundationDB.EventStore
 			Fdb.Start();
 
 
-			var db = await Fdb.OpenAsync(go.Token);
+			var db = await Fdb.OpenAsync(args.ClusterFile, null, go.Token);
 			var space = FdbSubspace.Create(FdbTuple.Create("bench", "es"));
 
 			var es = new FdbAppendOnlyStore(db, space);
@@ -247,6 +247,9 @@ namespace FoundationDB.EventStore
 		[Option('r', "read", Required = true,
 		  HelpText = "Input file to be processed.")]
 		public string InputFile { get; set; }
+
+		[Option('f', "cluster file", DefaultValue = null, HelpText = "Cluster file")]
+		public string ClusterFile { get; set; }
 
 		[Option('w', "workers", DefaultValue = 1,
 		  HelpText = "Number of workers to run.")]
